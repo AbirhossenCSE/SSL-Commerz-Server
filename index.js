@@ -37,6 +37,8 @@ async function run() {
 
         const database = client.db('SSL-Commerz');
         const productCollection = database.collection('product');
+        const orderCollection = database.collection('order');
+        const usersCollection = database.collection('users');
 
         // Initialize SSLCommerzPayment
         // const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live);
@@ -54,7 +56,7 @@ async function run() {
                 total_amount: product?.price * order.purchaseQuantity,
                 currency: 'BDT',
                 tran_id: tran_id, // use unique tran_id for each api call
-                success_url: 'http://localhost:3030/success',
+                success_url: `http://localhost:5000/payment/success/${tran_id}`,
                 fail_url: 'http://localhost:3030/fail',
                 cancel_url: 'http://localhost:3030/cancel',
                 ipn_url: 'http://localhost:3030/ipn',
@@ -80,17 +82,43 @@ async function run() {
                 ship_postcode: 1000,
                 ship_country: 'Bangladesh',
             };
-            console.log(data);
+            // console.log(data);
 
             const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live)
             sslcz.init(data).then(apiResponse => {
                 // Redirect the user to payment gateway
-                console.log("API res", apiResponse);
-              
+                // console.log("API res", apiResponse);
+
                 let GatewayPageURL = apiResponse.GatewayPageURL;
                 res.send({ url: GatewayPageURL });
-                console.log('Redirecting to: ', GatewayPageURL)
+
+                const finalOrder = {
+                    product,
+                    paidStatus: false,
+                    tranjectionId: tran_id,
+                };
+                const result = orderCollection.insertOne(finalOrder);
+
+                // console.log('Redirecting to: ', GatewayPageURL)
             });
+
+
+            app.post("/payment/success/:tranId", async (req, res) => {
+                console.log("transaction id", req.params.tranId);
+                const result = await orderCollection.updateOne({
+                    tranjectionId: req.params.tranId
+                },
+                {
+                    $set: {
+                        paidStatus: true,
+                    },
+                }
+            );
+            if (result.modifiedCount>0) {
+                res.redirect(`http://localhost:5173/payment/success/${req.params.tranId}`)
+            }
+
+            })
 
         })
 
@@ -107,9 +135,34 @@ async function run() {
             }
         });
 
+        app.post("/users", async (req, res) => {
+            try {
+                const { name, email } = req.body;
+
+                if (!name || !email) {
+                    return res.json({ message: "Missing required fields" });
+                }
+
+                // Check if user already exists
+                const existingUser = await usersCollection.findOne({ email });
+                if (existingUser) {
+                    return res.json({ message: "User already exists" });
+                }
+
+                // Insert new user
+                const newUser = { name, email, createdAt: new Date() };
+                await usersCollection.insertOne(newUser);
+
+                res.json({ message: "User registered successfully", user: newUser });
+            } catch (error) {
+                console.error("Server Error:", error);
+                res.json({ message: "Server Error", error: error.message });
+            }
+        });
+
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
+        // await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
